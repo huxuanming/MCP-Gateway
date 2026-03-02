@@ -11,6 +11,18 @@ use crate::error::AppError;
 
 use super::io_codec::{read_message, write_message};
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(target_os = "windows")]
+fn configure_spawn_command(command: &mut Command) {
+    // Avoid flashing a new terminal window when the gateway launches stdio MCP servers.
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_spawn_command(_command: &mut Command) {}
+
 pub struct ProcessConnection {
     child: Child,
     stdin: ChildStdin,
@@ -32,6 +44,7 @@ impl ProcessConnection {
         command.stdin(std::process::Stdio::piped());
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
+        configure_spawn_command(&mut command);
 
         let mut child = command.spawn().map_err(|error| {
             AppError::Upstream(format!(
