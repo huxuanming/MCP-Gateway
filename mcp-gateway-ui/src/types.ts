@@ -103,6 +103,12 @@ export interface HealthData {
   version: string;
 }
 
+export interface ServerConnectivityTestResult {
+  ok: boolean;
+  initialize: JsonValue;
+  testedAt: string;
+}
+
 export interface ApiErrorBody {
   code: string;
   message: string;

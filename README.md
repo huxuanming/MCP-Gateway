@@ -1,84 +1,141 @@
-# 本地 MCP 网关
+# Local MCP Gateway (Latest)
 
-MCP Gateway 是一个 MCP（Model Context Protocol）服务器网关。  
-它把多个 MCP Server 统一接入到一个入口，提供代理转发、认证和管理 API，方便你集中管理和使用。
+[English](./README.md) | [中文](./README.zh.md)
 
-> 最常见的用途就是将本地stdio协议变成远程MCP协议，再配合浏览器插件实现网页版ai聊天界面使用MCP工具的效果。
+MCP Gateway is an MCP (Model Context Protocol) server gateway.  
+It unifies multiple MCP servers behind one entry point, and provides proxy forwarding, authentication, admin APIs, plus the new `SKILLS` capability.
 
-![本地 MCP 网关界面](./image.png)
+Common use case: convert local `stdio` MCP services into remotely accessible `SSE / Streamable HTTP` MCP services, so desktop or browser AI clients can use tools and skills in web chat interfaces.
 
-## 1. 界面怎么填
+## Overview
 
-### 网关设置
+- Manage multiple MCP services in one place (Visual + JSON editing modes)
+- Unified `SSE` forwarding: default `GET|POST /api/v2/sse/<serverName>`
+- Unified `HTTP` forwarding: default `POST /api/v2/mcp/<serverName>`
+- Built-in authentication (`Admin Token` / `MCP Token`)
+- Built-in Skill MCP management in the `SKILLS` tab
+- Skill root directory validation (checks for `SKILL.md`)
+- Path guard (whitelist directories + out-of-scope policy)
+- Execution limits (timeout, max output)
+- Policy rules (`allow / confirm / deny`)
+- Pending command approval (`Approve / Reject`)
 
-- `监听地址`：网关监听的地址和端口，例如 `127.0.0.1:8765`
-- `SSE 路径`：SSE 访问路径
-- `HTTP 流路径`：Streamable HTTP 访问路径
+## UI Preview
 
-最终访问地址规则：
+### Image one (Main MCP configuration)
 
-- `SSE`: `http://<监听地址><SSE路径>/<服务名>`
-- `HTTP`: `http://<监听地址><HTTP路径>/<服务名>`
+![Local MCP Gateway Main UI](./image.png)
 
-按截图示例，`filesystem` 服务会生成：
+### Image two (SKILLS basic settings)
 
-- `http://127.0.0.1:8765/sse/filesystem`
-- `http://127.0.0.1:8765/mcp/filesystem`
+![Image two](./image2.png)
 
-### 安全配置
+### Image three (Policy rules and pending commands)
 
-- `ADMIN TOKEN`：管理接口令牌（留空则不启用）
-- `MCP TOKEN`：MCP 调用令牌（留空则不启用）
+![Image three](./image3.png)
 
-如果你在本机调试，两个都可以先留空；要对外开放时建议设置随机长 token。
+## 1. MCP Tab Configuration
 
-### MCP 服务列表
+### Gateway Settings
 
-每一行代表一个 MCP 服务：
+- `Listen Address`: gateway listen address and port, e.g. `127.0.0.1:8765`
+- `SSE Path`: default `"/api/v2/sse"`
+- `HTTP Stream Path`: default `"/api/v2/mcp"`
 
-- 开关：启用/禁用该服务
-- `名称`：服务名（会出现在 URL 末尾）
-- `命令`：启动命令（如 `npx`）
-- `参数`：命令参数
-- `+`：添加环境变量
-- `x`：删除服务
+Final endpoint rule:
 
-常见示例：
+- `SSE`: `http://<listenAddress><ssePath>/<serverName>`
+- `HTTP`: `http://<listenAddress><httpPath>/<serverName>`
 
-1. Playwright 服务
-   - 名称：`Playwright`
-   - 命令：`npx`
-   - 参数：`-y @playwright/mcp@latest`
+Example (listen on `127.0.0.1:8765`):
 
-## 2. 怎么使用（推荐流程）
+- `http://127.0.0.1:8765/api/v2/sse/filesystem`
+- `http://127.0.0.1:8765/api/v2/mcp/filesystem`
 
-1. 填写 `监听地址`、`SSE 路径`、`HTTP 流路径`。
-2. 按需填写 `ADMIN TOKEN` 和 `MCP TOKEN`。
-3. 在 `MCP 服务列表` 添加你的服务（至少要有 `名称 + 命令`）。
-4. 点 `保存配置`，把配置写入本地文件。
-5. 点右上角 `启动`，状态变成“运行中”即成功。
-6. 复制每个服务下方生成的 `SSE` 或 `HTTP` 链接，填到你的 MCP 客户端里使用。
+### Security (Password / Token)
 
-## 3. 可视化 / JSON 两种编辑方式
+- `ADMIN TOKEN`: protects `/api/v2/admin/*`
+- `MCP TOKEN`: protects `/api/v2/mcp/*` and `/api/v2/sse/*`
 
-- `可视化`：表单方式，适合手动维护
-- `JSON`：直接粘贴 `claude_desktop_config` 风格的 `mcpServers` 对象
+Notes:
 
-两种方式可以来回切换。若 JSON 格式错误，界面会提示，且不会启动。
+- In the current UI, leaving token empty disables that auth scope
+- For public exposure, enable auth and use long random tokens (as gateway passwords)
+- Client requests should include header: `Authorization: Bearer <your_token>`
 
-## 4. 配置文件位置
+### MCP Service List
 
-界面底部会显示当前配置文件位置（截图里也有）。默认路径通常是：
+Each row is one MCP service:
 
-- Windows: `%APPDATA%\mcp-gateway\config.v2.json`
+- Toggle: enable/disable the service
+- `Name`: service name (used in URL suffix)
+- `Command`: startup command (e.g. `npx`)
+- `Args`: command arguments
+- `+`: add environment variables
+- `x`: remove service
+
+Example (Playwright MCP):
+
+1. Name: `playwright`
+2. Command: `npx`
+3. Args: `-y @playwright/mcp@latest`
+
+## 2. New SKILLS Feature
+
+The `SKILLS` tab is used to enable and manage the built-in Skill MCP service:
+
+1. Turn on `Enable Built-in SKILL MCP`.
+2. Set `Skill Server Name` (default `__skills__`).
+3. Add `Skill Roots`, and ensure `SKILL.md` exists directly in those directories.
+4. Optionally enable `Path Guard`, add absolute whitelist directories, and choose violation action: `allow / confirm / deny`.
+5. Configure execution limits: `Execution Timeout (ms)` (minimum `1000`) and `Max Output (bytes)` (minimum `1024`).
+6. Maintain JSON policy rules in `Policy Rules` (`id/action/commandTree/contains/reason`).
+7. After running, approve or reject high-risk commands in `Pending Confirmations`.
+
+When gateway is running and SKILLS is enabled, the UI shows:
+
+- `Skill SSE`: `http://<listenAddress><ssePath>/<skillsServerName>`
+- `Skill HTTP`: `http://<listenAddress><httpPath>/<skillsServerName>`
+
+## 3. Recommended Workflow
+
+1. Configure listen address and paths in the `MCP` tab.
+2. Set `ADMIN TOKEN` and `MCP TOKEN` as needed (recommended for production).
+3. Add MCP services and save config.
+4. Open the `SKILLS` tab and configure Skill capabilities (optional).
+5. Click `Start` at top-right, and wait for running status.
+6. Copy generated `SSE / HTTP` endpoints to your MCP client.
+
+## 4. Visual / JSON Editing
+
+- `Visual`: form-based editing for daily use
+- `JSON`: direct edit of `mcpServers` object
+
+You can switch between them. If JSON is invalid, UI will show an error and block startup.
+
+## 5. Config File Location
+
+The current config file path is shown at the bottom of the UI. Default paths are usually:
+
+- Windows: `%APPDATA%\\mcp-gateway\\config.v2.json`
 - macOS: `~/Library/Application Support/mcp-gateway/config.v2.json`
 - Linux: `~/.config/mcp-gateway/config.v2.json`
 
-## 5. 常见问题
+## 6. FAQ
 
-1. 点了启动没反应/报错  
-   先确认每个服务至少填写了 `名称` 和 `命令`。
-2. 端口被占用  
-   改一个监听端口（例如 `127.0.0.1:9876`）后重试。
-3. 客户端连不上  
-   检查服务是否启用，URL 是否和界面里生成的一致（尤其是路径和服务名）。
+1. Startup failed  
+Check each service has at least `Name` + `Command`.
+2. Port already in use  
+Change listen port (e.g. `127.0.0.1:9876`) and retry.
+3. Client cannot connect  
+Check service enabled status and verify URL path/service name.
+4. SKILLS root cannot be enabled  
+Ensure `SKILL.md` exists directly under the selected directory (current check is non-recursive).
+
+## 7. Disclaimer
+
+- This software provides `SKILLS` capabilities that may execute system commands or scripts with your authorization.
+- Although command rules, path guards, and confirmation workflows are built in, they cannot guarantee complete coverage of all scenarios or absolute safety.
+- Any consequences caused by using `SKILLS` or command execution (including but not limited to data loss, system issues, file corruption, service interruption, or hardware/software damage) are the sole responsibility of the user.
+- The author and maintainers of this software are not liable for any direct, indirect, incidental, or consequential damages arising from such use.
+- You should validate high-risk commands in a controlled environment and maintain proper backups and permission isolation.

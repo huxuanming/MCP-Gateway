@@ -216,6 +216,47 @@ html, body {
   margin: 4px 0;
 }
 
+.server-test-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.server-test-chip.idle {
+  color: var(--text-muted);
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.25);
+}
+.server-test-chip.testing {
+  color: var(--accent-blue);
+  background: rgba(137, 180, 250, 0.12);
+  border-color: rgba(137, 180, 250, 0.35);
+}
+.server-test-chip.success {
+  color: var(--accent-green);
+  background: rgba(166, 227, 161, 0.12);
+  border-color: rgba(166, 227, 161, 0.35);
+}
+.server-test-chip.failed {
+  color: var(--accent-red);
+  background: rgba(243, 139, 168, 0.12);
+  border-color: rgba(243, 139, 168, 0.35);
+}
+
+.btn-test-server {
+  min-width: 64px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 /* ── Server 高级配置区（工作目录、环境变量）── */
 .server-advanced-fields {
   display: flex;
@@ -1026,9 +1067,28 @@ html, body {
   font-weight: 600;
 }
 
-.server-env-row .env-value-input {
+.server-env-row .env-value-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex: 1;
   min-width: 120px;
+}
+
+.server-env-row .env-value-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.server-env-row .btn-env-visibility {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  color: var(--text-muted);
+}
+
+.server-env-row .btn-env-visibility:hover {
+  color: var(--text-primary);
 }
 
 .server-env-row .btn-remove-env {
@@ -1123,6 +1183,7 @@ html, body {
   .skills-dir-row.with-toggle { grid-template-columns: 36px minmax(0, 1fr) auto 10px 24px; }
   .skills-dir-status { display: none; }
   .skills-action-select { width: 100%; }
+  .server-test-chip { display: none; }
 }
 
 /* ── 模态框/确认弹窗 ── */

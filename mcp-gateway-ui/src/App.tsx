@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Play, Square, Copy, Check, Code2, List, Languages, Save, FolderOpen } from "lucide-react";
+import { Play, Square, Copy, Check, Code2, List, Languages, Save, FolderOpen, Eye, EyeOff } from "lucide-react";
 import { getGatewayStatus, startGateway, stopGateway, type GatewayProcessStatus } from "./gatewayRuntime";
 import {
   loadLocalConfig,
   saveLocalConfig,
   getConfigPath,
   getDefaultSkillRules,
+  testMcpServerLocal,
   pickFolderDialog,
   validateSkillDirectory,
   focusMainWindowForSkillConfirmation,
@@ -17,6 +18,7 @@ import type {
   ServerConfig,
   SkillCommandRule,
   SkillConfirmation,
+  ServerConnectivityTestResult,
   SkillDirectoryValidation,
   SkillRootEntry,
   SkillPolicyAction,
@@ -275,6 +277,25 @@ function createMcpClientEntryJson(name: string, type: EndpointTransportType, url
 
 type SkillDirStatus = "idle" | "checking" | "valid" | "invalid" | "error";
 type SkillDirKind = "roots" | "whitelist";
+type ServerTestStatus = "idle" | "testing" | "success" | "failed";
+
+interface ServerTestState {
+  status: ServerTestStatus;
+  message: string;
+  testedAt?: string;
+}
+
+function serverTestKey(index: number, server?: Pick<ServerConfig, "name">): string {
+  const normalizedName = server?.name?.trim().toLowerCase();
+  if (normalizedName) {
+    return `name:${normalizedName}`;
+  }
+  return `idx:${index}`;
+}
+
+function asErrorMessage(error: unknown): string {
+  return String(error ?? "").replace(/^Error:\s*/, "").trim() || "Unknown error";
+}
 
 interface SkillDirectoryItem {
   id: string;
@@ -517,7 +538,20 @@ function SkillDirectoryListEditor({
 }
 
 // ── 单条 Server 可视化编辑行 ──────────────────────────────────────
-function ServerRow({ server, onChange, onDelete, running, baseUrl, ssePath, httpPath, copied, onCopy, t }: {
+function ServerRow({
+  server,
+  onChange,
+  onDelete,
+  running,
+  baseUrl,
+  ssePath,
+  httpPath,
+  copied,
+  onCopy,
+  testState,
+  onTest,
+  t,
+}: {
   server: ServerConfig;
   onChange: (u: ServerConfig) => void;
   onDelete: () => void;
@@ -527,14 +561,32 @@ function ServerRow({ server, onChange, onDelete, running, baseUrl, ssePath, http
   httpPath: string;
   copied: string | null;
   onCopy: (name: string, type: EndpointTransportType, url: string, key: string) => void;
+  testState: ServerTestState;
+  onTest: () => void;
   t: ReturnType<typeof useT>;
 }) {
   const sseUrl  = `${baseUrl}${ssePath}/${server.name}`;
   const httpUrl = `${baseUrl}${httpPath}/${server.name}`;
   const showLinks = running && server.enabled && server.name.trim();
+  const isTesting = testState.status === "testing";
+  const statusText = testState.status === "testing"
+    ? t("serverTestTesting")
+    : testState.status === "success"
+      ? t("serverTestSuccess")
+      : testState.status === "failed"
+        ? t("serverTestFailed")
+        : t("serverTestIdle");
+  const statusTitle = testState.testedAt
+    ? `${statusText} · ${formatTime(testState.testedAt)}${testState.message ? `\n${testState.message}` : ""}`
+    : (testState.message || statusText);
 
   // 环境变量数组形式（方便渲染）
   const envEntries = Object.entries(server.env);
+  const [visibleEnvValues, setVisibleEnvValues] = useState<Record<string, boolean>>({});
+
+  const toggleEnvValueVisibility = (rowId: string) => {
+    setVisibleEnvValues((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
+  };
 
   // 添加新的环境变量 KV 对
   const addEnvVar = () => {
@@ -591,6 +643,15 @@ function ServerRow({ server, onChange, onDelete, running, baseUrl, ssePath, http
             value={argsToStr(server.args)}
             onChange={(e) => onChange({ ...server, args: strToArgs(e.target.value) })} />
         </div>
+        <span className={`server-test-chip ${testState.status}`} title={statusTitle}>{statusText}</span>
+        <button
+          className="btn btn-secondary btn-sm btn-test-server"
+          title={t("testServerHint")}
+          disabled={isTesting}
+          onClick={onTest}
+        >
+          {isTesting ? t("serverTestTesting") : t("testServer")}
+        </button>
         {/* ── 添加环境变量的加号按钮 ── */}
         <button className="btn-icon btn-add-env" title={t("addEnvVar")} onClick={addEnvVar}>+</button>
         <button className="btn-icon btn-danger-icon" title={t("remove")} onClick={onDelete}>✕</button>
@@ -601,24 +662,41 @@ function ServerRow({ server, onChange, onDelete, running, baseUrl, ssePath, http
         <div className={`server-env-row ${!server.enabled ? "server-row-disabled" : ""}`}>
           <span className="env-label">{t("envVars")}</span>
           <div className="env-kv-list">
-            {envEntries.map(([key, value], idx) => (
-              <div className="env-kv-item" key={idx}>
-                <input
-                  className="form-input env-key-input"
-                  placeholder="KEY"
-                  value={key}
-                  onChange={(e) => updateEnvVar(key, e.target.value, value)}
-                />
-                <span className="env-kv-sep">=</span>
-                <input
-                  className="form-input env-value-input"
-                  placeholder="VALUE"
-                  value={value}
-                  onChange={(e) => updateEnvVar(key, key, e.target.value)}
-                />
-                <button className="btn-icon btn-danger-icon btn-remove-env" title={t("removeEnvVar")} onClick={() => removeEnvVar(key)}>✕</button>
-              </div>
-            ))}
+            {envEntries.map(([key, value], idx) => {
+              const rowId = `${idx}:${key}`;
+              const isVisible = visibleEnvValues[rowId] === true;
+              return (
+                <div className="env-kv-item" key={idx}>
+                  <input
+                    className="form-input env-key-input"
+                    placeholder="KEY"
+                    value={key}
+                    onChange={(e) => updateEnvVar(key, e.target.value, value)}
+                  />
+                  <span className="env-kv-sep">=</span>
+                  <div className="env-value-wrap">
+                    <input
+                      className="form-input env-value-input"
+                      type={isVisible ? "text" : "password"}
+                      autoComplete="off"
+                      placeholder="VALUE"
+                      value={value}
+                      onChange={(e) => updateEnvVar(key, key, e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="btn-icon btn-env-visibility"
+                      title={isVisible ? t("hideEnvValue") : t("showEnvValue")}
+                      aria-label={isVisible ? t("hideEnvValue") : t("showEnvValue")}
+                      onClick={() => toggleEnvValueVisibility(rowId)}
+                    >
+                      {isVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                    </button>
+                  </div>
+                  <button className="btn-icon btn-danger-icon btn-remove-env" title={t("removeEnvVar")} onClick={() => removeEnvVar(key)}>✕</button>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -687,6 +765,8 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [autoTestingServers, setAutoTestingServers] = useState(false);
+  const [serverTestStates, setServerTestStates] = useState<Record<string, ServerTestState>>({});
   const [configLoaded, setConfigLoaded] = useState(false);
   const [serversMode, setServersMode] = useState<"visual" | "json">("visual");
   const [jsonText, setJsonText] = useState("{}");
@@ -813,6 +893,8 @@ function App() {
       const nextMcpToken = cfg.security?.mcp?.token ?? "";
 
       setServers(nextServers);
+      setServerTestStates({});
+      setAutoTestingServers(false);
       setListen(nextListen);
       setApiPrefix(nextApiPrefix);
       setSsePath(nextSsePath);
@@ -871,6 +953,7 @@ function App() {
     try {
       const parsed = JSON.parse(jsonText) as Record<string, unknown>;
       setServers(jsonToServers(parsed));
+      setServerTestStates({});
       setJsonError(null);
       setServersMode("visual");
     } catch {
@@ -889,6 +972,66 @@ function App() {
   }, [refreshStatus]);
 
   const running = !!status?.running;
+
+  const runServerConnectivityTest = useCallback(async (server: ServerConfig, index: number) => {
+    const key = serverTestKey(index, server);
+    if (!server.command.trim()) {
+      setServerTestStates((prev) => ({
+        ...prev,
+        [key]: {
+          status: "failed",
+          message: t("serverTestMissingCommand"),
+        },
+      }));
+      return;
+    }
+
+    setServerTestStates((prev) => ({
+      ...prev,
+      [key]: {
+        status: "testing",
+        message: "",
+      },
+    }));
+
+    try {
+      const result: ServerConnectivityTestResult = await testMcpServerLocal(server);
+      setServerTestStates((prev) => ({
+        ...prev,
+        [key]: {
+          status: result.ok ? "success" : "failed",
+          message: "",
+          testedAt: typeof result.testedAt === "string" ? result.testedAt : new Date().toISOString(),
+        },
+      }));
+    } catch (error) {
+      setServerTestStates((prev) => ({
+        ...prev,
+        [key]: {
+          status: "failed",
+          message: asErrorMessage(error),
+        },
+      }));
+    }
+  }, [t]);
+
+  const runEnabledServerConnectivityTests = useCallback(async (targetServers: ServerConfig[]) => {
+    const candidates = targetServers
+      .map((server, index) => ({ server, index }))
+      .filter(({ server }) => server.enabled && server.command.trim().length > 0);
+    if (candidates.length === 0) {
+      return;
+    }
+
+    setAutoTestingServers(true);
+    try {
+      for (const item of candidates) {
+        await runServerConnectivityTest(item.server, item.index);
+      }
+    } finally {
+      setAutoTestingServers(false);
+    }
+  }, [runServerConnectivityTest]);
 
   const fetchSkillPending = useCallback(async () => {
     const fetchSeq = pendingFetchSeqRef.current + 1;
@@ -1187,13 +1330,19 @@ function App() {
       await startGateway();
       await refreshStatus();
       await fetchSkillPending();
+      void runEnabledServerConnectivityTests(nextServers);
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
   };
 
   const handleStop = async () => {
     setError(null); setBusy(true);
-    try { await stopGateway(); await refreshStatus(); setSkillPending([]); }
+    try {
+      await stopGateway();
+      await refreshStatus();
+      setSkillPending([]);
+      setAutoTestingServers(false);
+    }
     catch (e) { setError(String(e)); }
     finally { setBusy(false); }
   };
@@ -1222,6 +1371,7 @@ function App() {
   };
   const confirmDelete = () => {
     setServers((prev) => prev.filter((_, xi) => xi !== deleteConfirm.index));
+    setServerTestStates({});
     setDeleteConfirm({ open: false, index: -1, name: "" });
   };
   const cancelDelete = () => {
@@ -1386,6 +1536,9 @@ function App() {
               {jsonError && (
                 <div className="alert alert-error" style={{ marginBottom: 10 }}>{jsonError}</div>
               )}
+              {autoTestingServers && (
+                <div className="json-hint" style={{ marginBottom: 10 }}>{t("autoTestingServers")}</div>
+              )}
 
               {serversMode === "visual" ? (
                 <>
@@ -1409,8 +1562,18 @@ function App() {
                             httpPath={httpPath}
                             copied={copied}
                             onCopy={handleCopy}
+                            testState={serverTestStates[serverTestKey(i, s)] ?? { status: "idle", message: "" }}
+                            onTest={() => { void runServerConnectivityTest(s, i); }}
                             t={t}
-                            onChange={(u) => setServers((prev) => prev.map((x, xi) => xi === i ? u : x))}
+                            onChange={(u) => {
+                              setServers((prev) => prev.map((x, xi) => xi === i ? u : x));
+                              setServerTestStates((prev) => {
+                                const next = { ...prev };
+                                delete next[serverTestKey(i, s)];
+                                delete next[serverTestKey(i, u)];
+                                return next;
+                              });
+                            }}
                             onDelete={() => requestDelete(i, s.name)}
                           />
                         </div>
@@ -1418,10 +1581,13 @@ function App() {
                     </div>
                   )}
                   <button className="btn btn-secondary btn-sm" style={{ marginTop: 10 }}
-                    onClick={() => setServers((prev) => [...prev, {
-                      name: "", command: "npx", args: ["-y", ""],
-                      description: "", cwd: "", env: {}, lifecycle: null, stdioProtocol: "auto", enabled: true,
-                    }])}>
+                    onClick={() => {
+                      setServers((prev) => [...prev, {
+                        name: "", command: "npx", args: ["-y", ""],
+                        description: "", cwd: "", env: {}, lifecycle: null, stdioProtocol: "auto", enabled: true,
+                      }]);
+                      setServerTestStates({});
+                    }}>
                     {t("addServer")}
                   </button>
                 </>

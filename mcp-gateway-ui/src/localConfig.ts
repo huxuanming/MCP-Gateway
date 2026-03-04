@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { GatewayConfig, SkillCommandRule, SkillDirectoryValidation } from "./types";
+import type {
+  GatewayConfig,
+  ServerConfig,
+  ServerConnectivityTestResult,
+  SkillCommandRule,
+  SkillDirectoryValidation,
+} from "./types";
 
 export async function loadLocalConfig(): Promise<GatewayConfig> {
   return invoke<GatewayConfig>("load_local_config");
@@ -27,5 +33,9 @@ export async function validateSkillDirectory(path: string): Promise<SkillDirecto
 
 export async function focusMainWindowForSkillConfirmation(): Promise<void> {
   await invoke("focus_main_window_for_skill_confirmation");
+}
+
+export async function testMcpServerLocal(server: ServerConfig): Promise<ServerConnectivityTestResult> {
+  return invoke<ServerConnectivityTestResult>("test_mcp_server_local", { server });
 }
 

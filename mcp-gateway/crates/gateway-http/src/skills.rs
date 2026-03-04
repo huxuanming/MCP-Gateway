@@ -15,6 +15,18 @@ use tokio::sync::{Notify, RwLock};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(target_os = "windows")]
+fn configure_skill_command(command: &mut Command) {
+    // Keep skill scripts headless on Windows to avoid flashing cmd/powershell windows.
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_skill_command(_command: &mut Command) {}
+
 #[derive(Clone, Default)]
 pub struct SkillsService {
     confirmations: Arc<RwLock<HashMap<String, ConfirmationEntry>>>,
@@ -448,6 +460,7 @@ impl SkillsService {
             .kill_on_drop(true)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        configure_skill_command(&mut command);
         let output = tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
             command.output(),

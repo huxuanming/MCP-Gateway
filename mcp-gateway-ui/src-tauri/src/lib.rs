@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::net::TcpListener;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -8,7 +10,8 @@ use std::{fs, io};
 
 use chrono::Utc;
 use gateway_core::{
-    load_config_from_path, ConfigService, GatewayConfig, ProcessManager, SkillCommandRule,
+    load_config_from_path, ConfigService, GatewayConfig, ProcessManager, ServerConfig,
+    SkillCommandRule,
 };
 use gateway_http::{build_router, spawn_idle_reaper, AppState, SkillsService, SseHub};
 use serde::Serialize;
@@ -18,6 +21,18 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 const EMBEDDED_RUNTIME_ID: &str = "embedded://gateway-runtime";
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(target_os = "windows")]
+fn configure_ui_command(command: &mut Command) {
+    // Avoid flashing a console window when running helper shell commands.
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_ui_command(_command: &mut Command) {}
 
 struct ManagedGateway {
     task: JoinHandle<()>,
@@ -249,10 +264,12 @@ fn parse_port_from_listen(listen: &str) -> Option<u16> {
 #[cfg(target_os = "windows")]
 fn kill_port_process(port: u16) -> Result<String, String> {
     // netstat -ano 找 PID，再 taskkill
-    let output = Command::new("cmd")
-        .args(["/C", &format!(
+    let mut cmd = Command::new("cmd");
+    cmd.args(["/C", &format!(
             "for /f \"tokens=5\" %a in ('netstat -ano ^| findstr :{port} ^| findstr LISTENING') do taskkill /F /PID %a"
-        )])
+        )]);
+    configure_ui_command(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("执行端口清理命令失败: {e}"))?;
 
@@ -260,10 +277,12 @@ fn kill_port_process(port: u16) -> Result<String, String> {
         Ok(format!("已清理端口 {port} 的占用进程"))
     } else {
         // 也尝试 PowerShell 方式
-        let ps_output = Command::new("powershell")
-            .args(["-NoProfile", "-Command", &format!(
+        let mut powershell = Command::new("powershell");
+        powershell.args(["-NoProfile", "-Command", &format!(
                 "Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }}"
-            )])
+            )]);
+        configure_ui_command(&mut powershell);
+        let ps_output = powershell
             .output()
             .map_err(|e| format!("PowerShell 端口清理失败: {e}"))?;
         if ps_output.status.success() {
@@ -447,6 +466,25 @@ fn get_default_skill_rules() -> Vec<SkillCommandRule> {
     GatewayConfig::default().skills.policy.rules
 }
 
+#[tauri::command]
+async fn test_mcp_server_local(server: ServerConfig) -> Result<Value, String> {
+    if server.command.trim().is_empty() {
+        return Err("命令不能为空，无法执行检测".to_string());
+    }
+
+    let defaults = match resolve_default_config_path() {
+        Ok(path) if path.exists() => load_config_from_path(&path)
+            .map(|cfg| cfg.defaults)
+            .unwrap_or_else(|_| GatewayConfig::default().defaults),
+        _ => GatewayConfig::default().defaults,
+    };
+
+    ProcessManager::new()
+        .test_server(&server, &defaults)
+        .await
+        .map_err(|error| format!("MCP 连通性检测失败：{error}"))
+}
+
 fn upgrade_legacy_skill_rules_in_place(config: &mut Value) -> bool {
     let Some(rules) = config
         .pointer("/skills/policy/rules")
@@ -571,6 +609,7 @@ pub fn run() {
             save_local_config,
             get_config_path,
             get_default_skill_rules,
+            test_mcp_server_local,
             focus_main_window_for_skill_confirmation,
             pick_folder_dialog,
             validate_skill_directory
