@@ -562,7 +562,9 @@ impl SkillsService {
         let timeout_id = record.id.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Self::CONFIRMATION_DECISION_TIMEOUT).await;
-            timeout_service.reject_confirmation_on_timeout(&timeout_id).await;
+            timeout_service
+                .reject_confirmation_on_timeout(&timeout_id)
+                .await;
         });
         CreateConfirmationResult::Created(record)
     }
@@ -579,17 +581,14 @@ impl SkillsService {
                 let now = Utc::now();
                 let mut guard = self.confirmations.write().await;
                 Self::prune_confirmations_locked(&mut guard, now);
-                match guard
-                    .get(confirmation_id)
-                    .map(|entry| {
-                        (
-                            entry.record.status.clone(),
-                            entry.record.created_at,
-                            entry.notify.clone(),
-                            entry.timed_out,
-                        )
-                    })
-                {
+                match guard.get(confirmation_id).map(|entry| {
+                    (
+                        entry.record.status.clone(),
+                        entry.record.created_at,
+                        entry.notify.clone(),
+                        entry.timed_out,
+                    )
+                }) {
                     Some((ConfirmationStatus::Approved, _, _, _)) => {
                         guard.remove(confirmation_id);
                         return ConfirmationWaitOutcome::Approved;
@@ -748,7 +747,11 @@ fn confirmation_rejected_result(confirmation_id: &str, timed_out: bool) -> ToolR
     } else {
         "user rejected confirmation request"
     };
-    let reason = if timed_out { "timeout" } else { "user_rejected" };
+    let reason = if timed_out {
+        "timeout"
+    } else {
+        "user_rejected"
+    };
     tool_success(
         text.to_string(),
         json!({
@@ -1857,7 +1860,10 @@ mod tests {
             CreateConfirmationResult::Reused(c) => c,
             other => panic!("expected Reused for second, got {other:?}"),
         };
-        assert_eq!(first.id, second.id, "same fingerprint should reuse the same entry");
+        assert_eq!(
+            first.id, second.id,
+            "same fingerprint should reuse the same entry"
+        );
         let _ = service
             .reject_confirmation(&first.id)
             .await
@@ -1907,14 +1913,21 @@ mod tests {
         let second = two.await.expect("second join");
         // 并发同指纹：一个 Created，另一个 Reused，二者复用同一条记录
         let first_id = match &first {
-            CreateConfirmationResult::Created(c) | CreateConfirmationResult::Reused(c) => c.id.clone(),
+            CreateConfirmationResult::Created(c) | CreateConfirmationResult::Reused(c) => {
+                c.id.clone()
+            }
             CreateConfirmationResult::AlreadyTimedOut(id) => id.clone(),
         };
         let second_id = match &second {
-            CreateConfirmationResult::Created(c) | CreateConfirmationResult::Reused(c) => c.id.clone(),
+            CreateConfirmationResult::Created(c) | CreateConfirmationResult::Reused(c) => {
+                c.id.clone()
+            }
             CreateConfirmationResult::AlreadyTimedOut(id) => id.clone(),
         };
-        assert_eq!(first_id, second_id, "concurrent same-fingerprint calls should share one entry");
+        assert_eq!(
+            first_id, second_id,
+            "concurrent same-fingerprint calls should share one entry"
+        );
     }
 
     #[tokio::test]
