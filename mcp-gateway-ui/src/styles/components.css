@@ -153,6 +153,8 @@ html, body {
 
 /* 每个 MCP 服务器独立的块 */
 .server-block {
+  --server-name-col: 140px;
+  --server-command-col: 80px;
   background: var(--bg-secondary);
   border-radius: var(--radius);
   border: 1px solid var(--border-color);
@@ -172,7 +174,7 @@ html, body {
 
 .server-row-header {
   display: grid;
-  grid-template-columns: 52px 140px 110px 1fr 32px;
+  grid-template-columns: 52px var(--server-name-col) var(--server-command-col) minmax(0, 1fr) 32px;
   gap: 8px;
   padding: 6px 10px;
   font-size: 11px;
@@ -207,13 +209,15 @@ html, body {
 
 .server-row-fields {
   display: grid;
-  grid-template-columns: 140px 110px 1fr;
+  grid-template-columns: var(--server-name-col) var(--server-command-col) minmax(0, 1fr);
   gap: 10px;
   flex: 1;
+  min-width: 0;
 }
 
 .server-row-fields .form-input {
   margin: 4px 0;
+  min-width: 0;
 }
 
 .server-test-chip {

@@ -216,7 +216,7 @@ function ensureSkillsConfig(
       },
     },
     execution: {
-      timeoutMs: raw?.execution?.timeoutMs ?? 30000,
+      timeoutMs: raw?.execution?.timeoutMs ?? 60000,
       maxOutputBytes: raw?.execution?.maxOutputBytes ?? 131072,
     },
   };
@@ -2092,7 +2092,7 @@ function App() {
                         }
                       }
                     }
-                    placeholder="30000"
+                    placeholder="60000"
                   />
                   <span className="json-hint">{t("skillsExecutionTimeoutHint")}</span>
                 </div>

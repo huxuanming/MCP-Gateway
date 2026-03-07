@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -157,6 +157,12 @@ struct ParsedFrontmatter {
 #[derive(Debug)]
 struct StreamCapturedOutput {
     text: String,
+    truncated: bool,
+}
+
+#[derive(Debug, Default)]
+struct StreamCaptureState {
+    bytes: Vec<u8>,
     truncated: bool,
 }
 
@@ -862,6 +868,15 @@ fn command_failure_text(exit_code: i32, stdout: &str, stderr: &str) -> String {
     }
 }
 
+fn command_timeout_text(timeout_ms: u64, stdout: &str, stderr: &str) -> String {
+    let output = command_output_text(stdout, stderr);
+    if output == "command completed with no output" {
+        format!("command timed out after {timeout_ms}ms and produced no output")
+    } else {
+        format!("command timed out after {timeout_ms}ms.\nLast output:\n{output}")
+    }
+}
+
 fn summarize_discovered_skills(skills: &[DiscoveredSkill]) -> Vec<SkillSummary> {
     skills
         .iter()
@@ -1246,13 +1261,18 @@ async fn execute_skill_command(
         .take()
         .ok_or_else(|| AppError::Internal("missing stderr from skill command".to_string()))?;
 
+    let stdout_state = Arc::new(Mutex::new(StreamCaptureState::default()));
+    let stderr_state = Arc::new(Mutex::new(StreamCaptureState::default()));
+
     let stdout_task = tokio::spawn(capture_stream_output(
         stdout,
+        stdout_state.clone(),
         max_output_bytes,
         disable_truncation,
     ));
     let stderr_task = tokio::spawn(capture_stream_output(
         stderr,
+        stderr_state.clone(),
         max_output_bytes,
         disable_truncation,
     ));
@@ -1262,21 +1282,27 @@ async fn execute_skill_command(
             .map_err(|error| AppError::Upstream(format!("failed to execute command: {error}")))?,
         Err(_) => {
             let _ = child.start_kill();
-            let _ = child.wait().await;
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
-            return Err(AppError::Upstream(format!(
-                "command timed out after {timeout_ms}ms"
+            let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+            stdout_task.abort();
+            stderr_task.abort();
+            let stdout = snapshot_stream_output(&stdout_state);
+            let stderr = snapshot_stream_output(&stderr_state);
+            return Err(AppError::Upstream(command_timeout_text(
+                timeout_ms,
+                &stdout.text,
+                &stderr.text,
             )));
         }
     };
 
-    let stdout = stdout_task
+    stdout_task
         .await
         .map_err(|error| AppError::Internal(format!("stdout capture join error: {error}")))??;
-    let stderr = stderr_task
+    stderr_task
         .await
         .map_err(|error| AppError::Internal(format!("stderr capture join error: {error}")))??;
+    let stdout = snapshot_stream_output(&stdout_state);
+    let stderr = snapshot_stream_output(&stderr_state);
 
     Ok(SkillCommandExecution {
         status,
@@ -1287,19 +1313,14 @@ async fn execute_skill_command(
 
 async fn capture_stream_output<R>(
     mut reader: R,
+    shared_state: Arc<Mutex<StreamCaptureState>>,
     max_output_bytes: usize,
     disable_truncation: bool,
-) -> Result<StreamCapturedOutput, AppError>
+) -> Result<(), AppError>
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let mut chunk = [0_u8; 8192];
-    let mut captured = if disable_truncation {
-        Vec::with_capacity(8192)
-    } else {
-        Vec::with_capacity(max_output_bytes.min(8192))
-    };
-    let mut truncated = false;
 
     loop {
         let read = reader.read(&mut chunk).await.map_err(|error| {
@@ -1309,27 +1330,41 @@ where
             break;
         }
 
+        let mut state = match shared_state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
         if disable_truncation {
-            captured.extend_from_slice(&chunk[..read]);
+            state.bytes.extend_from_slice(&chunk[..read]);
             continue;
         }
 
-        if captured.len() < max_output_bytes {
-            let available = max_output_bytes - captured.len();
+        if state.bytes.len() < max_output_bytes {
+            let available = max_output_bytes - state.bytes.len();
             let take = available.min(read);
-            captured.extend_from_slice(&chunk[..take]);
+            state.bytes.extend_from_slice(&chunk[..take]);
             if take < read {
-                truncated = true;
+                state.truncated = true;
             }
         } else {
-            truncated = true;
+            state.truncated = true;
         }
     }
 
-    Ok(StreamCapturedOutput {
-        text: String::from_utf8_lossy(&captured).to_string(),
-        truncated,
-    })
+    Ok(())
+}
+
+fn snapshot_stream_output(shared_state: &Arc<Mutex<StreamCaptureState>>) -> StreamCapturedOutput {
+    let state = match shared_state.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    StreamCapturedOutput {
+        text: String::from_utf8_lossy(&state.bytes).to_string(),
+        truncated: state.truncated,
+    }
 }
 
 fn evaluate_policy(
@@ -2284,6 +2319,48 @@ mod tests {
             command_failure_text(2, "oops\n", ""),
             "command finished with non-zero exit code (2).\noops"
         );
+    }
+
+    #[test]
+    fn command_timeout_text_includes_last_output() {
+        assert_eq!(
+            command_timeout_text(60_000, "", ""),
+            "command timed out after 60000ms and produced no output"
+        );
+        assert_eq!(
+            command_timeout_text(60_000, "waiting for input\n", ""),
+            "command timed out after 60000ms.\nLast output:\nwaiting for input"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_skill_command_timeout_returns_last_output() {
+        let command_text = if cfg!(target_os = "windows") {
+            "Write-Output 'waiting for input'; Start-Sleep -Seconds 5"
+        } else {
+            "printf 'waiting for input\\n'; sleep 5"
+        };
+        let (runner, runner_args) = shell_command_for_current_os(command_text);
+        let mut command = Command::new(&runner);
+        command
+            .args(&runner_args)
+            .kill_on_drop(true)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        configure_skill_command(&mut command);
+
+        let error = execute_skill_command(&mut command, 250, 4096, false)
+            .await
+            .expect_err("command should time out");
+
+        match error {
+            AppError::Upstream(message) => {
+                assert!(message.contains("command timed out after 250ms"));
+                assert!(message.contains("Last output:"));
+                assert!(message.contains("waiting for input"));
+            }
+            other => panic!("expected upstream timeout error, got {other:?}"),
+        }
     }
 
     #[test]
