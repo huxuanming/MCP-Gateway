@@ -5,6 +5,7 @@ const translations = {
   zh: {
     // 顶栏
     appTitle: "MCP 网关",
+    windowTitle: "本地 MCP 网关",
     running: "运行中",
     stopped: "已停止",
     starting: "启动中…",
@@ -30,6 +31,12 @@ const translations = {
     adminTokenUsageHint: "用于管理配置",
     mcpTokenUsageHint: "用于远程 MCP 服务验证",
     tokenPlaceholder: "留空则禁用",
+    runtimePython: "Python",
+    runtimeNode: "Node",
+    runtimeUv: "UV",
+    runtimeChecking: "检测中",
+    runtimeNotInstalled: "未安装",
+    runtimeDetectFailed: "检测失败",
 
     // Skills
     skillsConfig: "Skill MCP",
@@ -169,6 +176,8 @@ const translations = {
     openGithub: "GitHub 地址",
     openQqGroup: "加入 QQ 群",
     openTelegramGroup: "加入 TG 群",
+    versionLabel: "版本",
+    updateAvailableShort: "有更新",
     qqGroupFallbackHint: "当前 QQ 客户端不支持该协议或未配置邀请链接。请在 QQ 里搜索群号 {group}，或提供群邀请链接（k/idkey）以实现一键加群。",
 
     // 语言切换
@@ -183,6 +192,7 @@ const translations = {
   en: {
     // Topbar
     appTitle: "MCP Gateway",
+    windowTitle: "Local MCP Gateway",
     running: "Running",
     stopped: "Stopped",
     starting: "Starting…",
@@ -208,6 +218,12 @@ const translations = {
     adminTokenUsageHint: "for admin/config management",
     mcpTokenUsageHint: "for remote MCP service authentication",
     tokenPlaceholder: "Leave empty to disable",
+    runtimePython: "Python",
+    runtimeNode: "Node",
+    runtimeUv: "UV",
+    runtimeChecking: "Checking",
+    runtimeNotInstalled: "Not installed",
+    runtimeDetectFailed: "Check failed",
 
     // Skills
     skillsConfig: "Skill MCP",
@@ -347,6 +363,8 @@ const translations = {
     openGithub: "GitHub address",
     openQqGroup: "QQ group address",
     openTelegramGroup: "Telegram group address",
+    versionLabel: "Version",
+    updateAvailableShort: "Update",
     qqGroupFallbackHint: "Current QQ client does not support this protocol, or invite link is not configured. Search group {group} in QQ, or provide an invite link (k/idkey) for one-click join.",
 
     // Language toggle

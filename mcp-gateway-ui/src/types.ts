@@ -185,3 +185,14 @@ export interface SkillDirectoryValidation {
   isDir: boolean;
   hasSkillMd: boolean;
 }
+
+export interface LocalRuntimeAvailability {
+  installed: boolean;
+  version: string | null;
+}
+
+export interface LocalRuntimeSummary {
+  python: LocalRuntimeAvailability;
+  node: LocalRuntimeAvailability;
+  uv: LocalRuntimeAvailability;
+}

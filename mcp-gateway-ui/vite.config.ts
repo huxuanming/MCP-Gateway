@@ -1,13 +1,27 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { execSync } from "child_process";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-// 优先使用 CI 注入的 tag（如 v0.2.0），否则回退到 package.json 的 version
+function readGitTagVersion(): string | null {
+  try {
+    const tag = execSync("git describe --tags --abbrev=0", {
+      cwd: __dirname,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim();
+    return tag.replace(/^v/, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+// 优先使用 CI 注入的 tag（如 v0.2.0），其次读取本地 git tag，最后回退 package.json
 const pkgVersion = (JSON.parse(
   readFileSync(resolve(__dirname, "package.json"), "utf-8")
 ) as { version: string }).version;
-const appVersion = process.env.VITE_APP_VERSION || pkgVersion;
+const gitTagVersion = readGitTagVersion();
+const appVersion = (process.env.VITE_APP_VERSION || gitTagVersion || pkgVersion).replace(/^v/, "");
 
 export default defineConfig(async () => ({
   plugins: [react()],

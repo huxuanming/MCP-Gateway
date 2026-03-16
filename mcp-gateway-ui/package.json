@@ -1,9 +1,12 @@
 {
   "name": "mcp-gateway-ui",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.7",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/sync-version.mjs",
+    "prebuild": "node scripts/sync-version.mjs",
+    "pretauri": "node scripts/sync-version.mjs",
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

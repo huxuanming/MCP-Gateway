@@ -581,6 +581,49 @@ html, body {
   gap: 8px;
 }
 
+.section-heading-row-balanced {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: center;
+  column-gap: 12px;
+}
+
+.runtime-inline-summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  gap: 0;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.runtime-inline-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.runtime-inline-item + .runtime-inline-item {
+  border-left: 1px solid rgba(69, 71, 90, 0.9);
+}
+
+.runtime-inline-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.runtime-inline-value {
+  font-family: "Consolas", "Monaco", monospace;
+  color: var(--text-primary);
+}
+
 /* ── 网关设置三列 ── */
 .gateway-fields {
   display: grid;
@@ -1083,6 +1126,49 @@ html, body {
   align-items: center;
   gap: 8px;
 }
+.bottom-version-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: rgba(49, 50, 68, 0.52);
+  color: var(--text-secondary);
+  font-family: "Consolas", "Monaco", monospace;
+  font-size: 11px;
+  line-height: 1;
+}
+.bottom-version-chip-clickable {
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+.bottom-version-chip-clickable:hover {
+  color: var(--text-primary);
+  border-color: rgba(243, 139, 168, 0.5);
+  background: rgba(69, 71, 90, 0.72);
+}
+.bottom-version-chip-clickable:focus-visible {
+  outline: 1px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+.bottom-version-chip-text {
+  display: inline-flex;
+  align-items: center;
+}
+.bottom-version-chip-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff5f73;
+  box-shadow: 0 0 0 2px rgba(24, 24, 37, 0.92);
+}
 .bottom-link-btn {
   width: 28px;
   height: 28px;
@@ -1267,6 +1353,23 @@ html, body {
   .gateway-fields { grid-template-columns: 1fr; }
   .skills-execution-config { grid-template-columns: 1fr; }
   .skill-confirm-head { flex-direction: column; align-items: flex-start; }
+  .section-heading-row { align-items: flex-start; }
+  .section-heading-row-balanced {
+    grid-template-columns: 1fr;
+    row-gap: 8px;
+  }
+  .runtime-inline-summary {
+    justify-content: flex-start;
+    justify-self: start;
+    row-gap: 4px;
+  }
+  .runtime-inline-item {
+    padding-left: 0;
+    padding-right: 10px;
+  }
+  .runtime-inline-item:first-child {
+    border-left: none;
+  }
 
   .skills-redesign-section { padding: 12px; }
   .skills-top-row { grid-template-columns: 1fr; gap: 8px; }

@@ -19,6 +19,8 @@ import { open } from "@tauri-apps/plugin-shell";
 import { getGatewayStatus, startGateway, stopGateway, type GatewayProcessStatus } from "./gatewayRuntime";
 import {
   clearServerAuthLocal,
+  detectLocalRuntimes,
+  setMainWindowTitle,
   getServerAuthStateLocal,
   loadLocalConfig,
   saveLocalConfig,
@@ -34,6 +36,7 @@ import { ApiClient } from "./api";
 import { usePolling, type PollOutcome } from "./hooks/usePolling";
 import type {
   GatewayConfig,
+  LocalRuntimeSummary,
   ServerConfig,
   ServerAuthState,
   SkillCommandRule,
@@ -236,6 +239,24 @@ function formatTime(value: string): string {
     return value;
   }
   return parsed.toLocaleString();
+}
+
+function runtimeDisplayValue(
+  runtime: { installed: boolean; version: string | null } | undefined,
+  loading: boolean,
+  failed: boolean,
+  t: ReturnType<typeof useT>,
+): string {
+  if (loading) {
+    return t("runtimeChecking");
+  }
+  if (failed || !runtime) {
+    return t("runtimeDetectFailed");
+  }
+  if (!runtime.installed) {
+    return t("runtimeNotInstalled");
+  }
+  return runtime.version?.trim() || t("runtimeDetectFailed");
 }
 
 interface EditableConfigSnapshot {
@@ -979,6 +1000,7 @@ function App() {
   );
   const updateDismissed =
     !!updateInfo?.latestVersion && updateInfo.latestVersion === dismissedVersion;
+  const hasAvailableUpdate = !!updateInfo?.hasUpdate;
   const toggleLang = () => {
     const next: Lang = lang === "zh" ? "en" : "zh";
     setLang(next);
@@ -1012,6 +1034,8 @@ function App() {
   const [serverTestStates, setServerTestStates] = useState<Record<string, ServerTestState>>({});
   const [serverAuthStates, setServerAuthStates] = useState<Record<string, ServerAuthState>>({});
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [localRuntimeSummary, setLocalRuntimeSummary] = useState<LocalRuntimeSummary | null>(null);
+  const [localRuntimeDetectFailed, setLocalRuntimeDetectFailed] = useState(false);
   const [serversMode, setServersMode] = useState<"visual" | "json">("visual");
   const [jsonText, setJsonText] = useState("{}");
   const [jsonError, setJsonError] = useState<string | null>(null);
@@ -1226,6 +1250,39 @@ function App() {
     // 获取配置文件路径
     getConfigPath().then(setConfigPath).catch(() => {});
   }, [createServerUiIds, runItemValidation]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    detectLocalRuntimes()
+      .then((summary) => {
+        if (cancelled) {
+          return;
+        }
+        setLocalRuntimeSummary(summary);
+        setLocalRuntimeDetectFailed(false);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setLocalRuntimeDetectFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const baseTitle = `${t("windowTitle")} v${CURRENT_VERSION}`;
+    const nextTitle = hasAvailableUpdate && updateInfo?.latestVersion
+      ? `${baseTitle} ● ${t("updateAvailableShort")} ${updateInfo.latestVersion}`
+      : baseTitle;
+
+    document.title = nextTitle;
+    setMainWindowTitle(nextTitle).catch(() => {});
+  }, [hasAvailableUpdate, lang, t, updateInfo?.latestVersion]);
 
   const parsedJsonServers = useMemo(() => {
     if (serversMode !== "json") {
@@ -1964,6 +2021,24 @@ function App() {
   const baseUrl = listen.startsWith("http") ? listen : `http://${listen}`;
   const skillHttpUrl = `${baseUrl}${httpPath}/${skills.serverName}`;
   const skillSseUrl = `${baseUrl}${ssePath}/${skills.serverName}`;
+  const runtimeLoading = !localRuntimeSummary && !localRuntimeDetectFailed;
+  const runtimeCards = useMemo(() => ([
+    {
+      key: "python",
+      label: t("runtimePython"),
+      value: runtimeDisplayValue(localRuntimeSummary?.python, runtimeLoading, localRuntimeDetectFailed, t),
+    },
+    {
+      key: "node",
+      label: t("runtimeNode"),
+      value: runtimeDisplayValue(localRuntimeSummary?.node, runtimeLoading, localRuntimeDetectFailed, t),
+    },
+    {
+      key: "uv",
+      label: t("runtimeUv"),
+      value: runtimeDisplayValue(localRuntimeSummary?.uv, runtimeLoading, localRuntimeDetectFailed, t),
+    },
+  ]), [localRuntimeDetectFailed, localRuntimeSummary, runtimeLoading, t]);
 
   const handleCopy = async (name: string, type: EndpointTransportType, url: string, key: string) => {
     const snippet = createMcpClientEntryJson(name, type, url, mcpToken);
@@ -1979,6 +2054,13 @@ function App() {
       setError(String(error));
     }
   }, []);
+
+  const handleOpenLatestRelease = useCallback(async () => {
+    if (!updateInfo?.releaseUrl) {
+      return;
+    }
+    await handleOpenExternalLink(updateInfo.releaseUrl);
+  }, [handleOpenExternalLink, updateInfo?.releaseUrl]);
 
   const handleOpenQqGroup = useCallback(async () => {
     const inviteUrl = QQ_GROUP_INVITE_URL.trim();
@@ -2001,6 +2083,9 @@ function App() {
     }
     setError(t("qqGroupFallbackHint").replace("{group}", QQ_GROUP_NUMBER));
   }, [t]);
+  const versionChipTitle = hasAvailableUpdate && updateInfo?.latestVersion
+    ? `${t("versionLabel")} v${CURRENT_VERSION} · ${t("updateAvailable")} ${updateInfo.latestVersion}`
+    : `${t("versionLabel")} v${CURRENT_VERSION}`;
 
   return (
     <div className="app-root">
@@ -2150,8 +2235,16 @@ function App() {
 
             {/* ── MCP Servers ── */}
             <section className="config-section">
-              <div className="section-heading-row">
+              <div className="section-heading-row section-heading-row-balanced">
                 <span className="section-heading" style={{ marginBottom: 0 }}>{t("mcpServers")}</span>
+                <div className="runtime-inline-summary" role="status" aria-live="polite">
+                  {runtimeCards.map((item) => (
+                    <span className="runtime-inline-item" key={item.key}>
+                      <span className="runtime-inline-label">{item.label}</span>
+                      <span className="runtime-inline-value">{item.value}</span>
+                    </span>
+                  ))}
+                </div>
                 <div className="section-heading-actions">
                   <div className="mode-toggle">
                     <button className={`mode-btn ${serversMode === "visual" ? "active" : ""}`}
@@ -2525,6 +2618,22 @@ function App() {
           >
             <Send size={14} />
           </button>
+          {hasAvailableUpdate && updateInfo?.releaseUrl ? (
+            <button
+              type="button"
+              className="bottom-version-chip bottom-version-chip-clickable"
+              title={versionChipTitle}
+              aria-label={versionChipTitle}
+              onClick={() => { void handleOpenLatestRelease(); }}
+            >
+              <span className="bottom-version-chip-text">v{CURRENT_VERSION}</span>
+              <span className="bottom-version-chip-dot" aria-hidden />
+            </button>
+          ) : (
+            <span className="bottom-version-chip" title={versionChipTitle} aria-label={versionChipTitle}>
+              <span className="bottom-version-chip-text">v{CURRENT_VERSION}</span>
+            </span>
+          )}
         </div>
       </div>
 

@@ -116,6 +116,26 @@ struct SkillDirectoryValidation {
     has_skill_md: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalRuntimeAvailability {
+    installed: bool,
+    version: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalRuntimeSummary {
+    python: LocalRuntimeAvailability,
+    node: LocalRuntimeAvailability,
+    uv: LocalRuntimeAvailability,
+}
+
+struct VersionProbeCommand {
+    executable: &'static str,
+    args: &'static [&'static str],
+}
+
 fn stopped_status(last_error: Option<String>) -> GatewayProcessStatus {
     GatewayProcessStatus {
         running: false,
@@ -362,6 +382,141 @@ fn resolve_default_config_path() -> Result<PathBuf, String> {
     Ok(base)
 }
 
+fn probe_runtime_version(
+    commands: &[VersionProbeCommand],
+    extract_version: fn(&str) -> Option<String>,
+) -> LocalRuntimeAvailability {
+    for spec in commands {
+        if let Some(version) = run_version_probe(spec, extract_version) {
+            return LocalRuntimeAvailability {
+                installed: true,
+                version: Some(version),
+            };
+        }
+    }
+
+    LocalRuntimeAvailability {
+        installed: false,
+        version: None,
+    }
+}
+
+fn run_version_probe(
+    spec: &VersionProbeCommand,
+    extract_version: fn(&str) -> Option<String>,
+) -> Option<String> {
+    let mut command = Command::new(spec.executable);
+    command.args(spec.args);
+    configure_ui_command(&mut command);
+    let output = command.output().ok()?;
+
+    for source in [&output.stdout, &output.stderr] {
+        let text = String::from_utf8_lossy(source);
+        for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            if let Some(version) = extract_version(line) {
+                return Some(version);
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_python_version(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let version = trimmed.strip_prefix("Python ")?;
+    version
+        .chars()
+        .next()
+        .filter(|ch| ch.is_ascii_digit())
+        .map(|_| trimmed.to_string())
+}
+
+fn extract_node_version(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let version = trimmed.strip_prefix('v')?;
+    version
+        .chars()
+        .next()
+        .filter(|ch| ch.is_ascii_digit())
+        .map(|_| trimmed.to_string())
+}
+
+fn extract_uv_version(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let version = trimmed.strip_prefix("uv ")?;
+    version
+        .chars()
+        .next()
+        .filter(|ch| ch.is_ascii_digit())
+        .map(|_| trimmed.to_string())
+}
+
+fn detect_python_runtime() -> LocalRuntimeAvailability {
+    let commands = if cfg!(target_os = "windows") {
+        vec![
+            VersionProbeCommand {
+                executable: "py",
+                args: &["-3", "--version"],
+            },
+            VersionProbeCommand {
+                executable: "python",
+                args: &["--version"],
+            },
+            VersionProbeCommand {
+                executable: "python3",
+                args: &["--version"],
+            },
+            VersionProbeCommand {
+                executable: "py",
+                args: &["--version"],
+            },
+        ]
+    } else {
+        vec![
+            VersionProbeCommand {
+                executable: "python3",
+                args: &["--version"],
+            },
+            VersionProbeCommand {
+                executable: "python",
+                args: &["--version"],
+            },
+        ]
+    };
+
+    probe_runtime_version(&commands, extract_python_version)
+}
+
+fn detect_node_runtime() -> LocalRuntimeAvailability {
+    probe_runtime_version(
+        &[VersionProbeCommand {
+            executable: "node",
+            args: &["--version"],
+        }],
+        extract_node_version,
+    )
+}
+
+fn detect_uv_runtime() -> LocalRuntimeAvailability {
+    probe_runtime_version(
+        &[VersionProbeCommand {
+            executable: "uv",
+            args: &["--version"],
+        }],
+        extract_uv_version,
+    )
+}
+
+#[tauri::command]
+fn detect_local_runtimes() -> LocalRuntimeSummary {
+    LocalRuntimeSummary {
+        python: detect_python_runtime(),
+        node: detect_node_runtime(),
+        uv: detect_uv_runtime(),
+    }
+}
+
 #[tauri::command]
 fn load_local_config() -> Result<Value, String> {
     let path = resolve_default_config_path()?;
@@ -415,6 +570,16 @@ fn focus_main_window_for_skill_confirmation(app: tauri::AppHandle) -> Result<(),
     let _ = window.set_focus();
     let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
     Ok(())
+}
+
+#[tauri::command]
+fn set_main_window_title(app: tauri::AppHandle, title: String) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    window
+        .set_title(&title)
+        .map_err(|error| format!("设置窗口标题失败：{error}"))
 }
 
 fn has_skill_md_in_directory(root: &Path) -> Result<bool, String> {
@@ -653,8 +818,41 @@ fn matches_rule_id_set(ids: &[String], expected: &[&str]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::upgrade_legacy_skill_rules_in_place;
+    use super::{
+        extract_node_version, extract_python_version, extract_uv_version,
+        upgrade_legacy_skill_rules_in_place,
+    };
     use serde_json::json;
+
+    #[test]
+    fn extracts_python_version_output() {
+        assert_eq!(
+            extract_python_version("Python 3.13.2"),
+            Some("Python 3.13.2".to_string())
+        );
+        assert_eq!(
+            extract_python_version(
+                "Python was not found; run without arguments to install from the Microsoft Store."
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn extracts_node_version_output() {
+        assert_eq!(
+            extract_node_version("v23.11.0"),
+            Some("v23.11.0".to_string())
+        );
+    }
+
+    #[test]
+    fn extracts_uv_version_output() {
+        assert_eq!(
+            extract_uv_version("uv 0.6.14 (a4cec56dc 2025-04-09)"),
+            Some("uv 0.6.14 (a4cec56dc 2025-04-09)".to_string())
+        );
+    }
 
     #[test]
     fn upgrades_legacy_three_rule_pack() {
@@ -726,8 +924,10 @@ pub fn run() {
             reauthorize_server_local,
             test_mcp_server_local,
             focus_main_window_for_skill_confirmation,
+            set_main_window_title,
             pick_folder_dialog,
-            validate_skill_directory
+            validate_skill_directory,
+            detect_local_runtimes
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

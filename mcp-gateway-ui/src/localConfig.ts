@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   GatewayConfig,
+  LocalRuntimeSummary,
   ServerConfig,
   ServerAuthState,
   ServerConnectivityTestResult,
@@ -36,6 +37,10 @@ export async function focusMainWindowForSkillConfirmation(): Promise<void> {
   await invoke("focus_main_window_for_skill_confirmation");
 }
 
+export async function setMainWindowTitle(title: string): Promise<void> {
+  await invoke("set_main_window_title", { title });
+}
+
 export async function testMcpServerLocal(server: ServerConfig): Promise<ServerConnectivityTestResult> {
   return invoke<ServerConnectivityTestResult>("test_mcp_server_local", { server });
 }
@@ -52,3 +57,6 @@ export async function reauthorizeServerLocal(server: ServerConfig): Promise<Serv
   return invoke<ServerConnectivityTestResult>("reauthorize_server_local", { server });
 }
 
+export async function detectLocalRuntimes(): Promise<LocalRuntimeSummary> {
+  return invoke<LocalRuntimeSummary>("detect_local_runtimes");
+}
