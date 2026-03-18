@@ -1,8 +1,7 @@
-use std::path::Path;
-use std::process::Command;
-
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -47,11 +46,12 @@ pub fn detect_terminal_encoding_status() -> TerminalEncodingStatus {
     }
 }
 
+#[cfg(target_os = "windows")]
 pub fn wrap_windows_powershell_command_for_utf8(
     executable: &str,
     args: &[String],
 ) -> Option<(String, Vec<String>)> {
-    if !cfg!(target_os = "windows") || !is_powershell_like_command(executable) {
+    if !is_powershell_like_command(executable) {
         return None;
     }
 
@@ -84,13 +84,21 @@ pub fn wrap_windows_powershell_command_for_utf8(
     ))
 }
 
+#[cfg(not(target_os = "windows"))]
+pub fn wrap_windows_powershell_command_for_utf8(
+    _executable: &str,
+    _args: &[String],
+) -> Option<(String, Vec<String>)> {
+    None
+}
+
 pub fn is_powershell_like_command(command: &str) -> bool {
-    let trimmed = command.trim().trim_matches('"');
-    let file_name = Path::new(trimmed)
-        .file_name()
-        .and_then(|value| value.to_str())
+    let trimmed = command.trim().trim_matches(|ch| matches!(ch, '"' | '\''));
+    let file_name = trimmed
+        .rsplit(['/', '\\'])
+        .next()
         .unwrap_or(trimmed)
-        .trim_matches('"')
+        .trim_matches(|ch| matches!(ch, '"' | '\''))
         .to_ascii_lowercase();
 
     matches!(
@@ -99,6 +107,7 @@ pub fn is_powershell_like_command(command: &str) -> bool {
     )
 }
 
+#[cfg(target_os = "windows")]
 fn inject_utf8_prelude_into_command_args(args: &[String]) -> Option<Vec<String>> {
     let command_index = args
         .iter()
@@ -110,6 +119,7 @@ fn inject_utf8_prelude_into_command_args(args: &[String]) -> Option<Vec<String>>
     Some(injected)
 }
 
+#[cfg(target_os = "windows")]
 fn powershell_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
