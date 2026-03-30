@@ -17,7 +17,7 @@ use gateway_http::{build_router, spawn_idle_reaper, AppState, SkillsService, Sse
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{Manager, State};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 
 const EMBEDDED_RUNTIME_ID: &str = "embedded://gateway-runtime";
@@ -81,9 +81,18 @@ struct ManagedGateway {
     process_manager: ProcessManager,
 }
 
-#[derive(Default)]
 struct GatewayProcessState {
     inner: Mutex<Option<ManagedGateway>>,
+    lifecycle_lock: AsyncMutex<()>,
+}
+
+impl Default for GatewayProcessState {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(None),
+            lifecycle_lock: AsyncMutex::new(()),
+        }
+    }
 }
 
 impl Drop for GatewayProcessState {
@@ -275,6 +284,7 @@ fn gateway_status(state: State<GatewayProcessState>) -> GatewayProcessStatus {
 async fn start_gateway(
     state: State<'_, GatewayProcessState>,
 ) -> Result<GatewayProcessStatus, String> {
+    let _lifecycle_guard = state.lifecycle_lock.lock().await;
     {
         let mut guard = state.inner.lock().map_err(|_| "gateway state poisoned")?;
         if let Some(managed) = guard.as_mut() {
@@ -299,6 +309,7 @@ async fn start_gateway(
 async fn stop_gateway(
     state: State<'_, GatewayProcessState>,
 ) -> Result<GatewayProcessStatus, String> {
+    let _lifecycle_guard = state.lifecycle_lock.lock().await;
     let managed = {
         let mut guard = state.inner.lock().map_err(|_| "gateway state poisoned")?;
         guard.take()
@@ -309,9 +320,12 @@ async fn stop_gateway(
             let _ = tx.send(());
         }
 
-        let wait_result = tokio::time::timeout(Duration::from_secs(3), &mut managed.task).await;
+        managed.process_manager.reset_pool().await;
+
+        let wait_result = tokio::time::timeout(Duration::from_secs(5), &mut managed.task).await;
         if wait_result.is_err() {
             managed.task.abort();
+            let _ = managed.task.await;
         }
     }
 
