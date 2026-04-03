@@ -265,7 +265,7 @@ async fn start_embedded_gateway(config_path: PathBuf) -> Result<ManagedGateway, 
     })
 }
 
-use tauri::{AppHandle, Manager, State};
+use tauri::AppHandle;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 
@@ -968,22 +968,22 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
-                .menu_on_left_click(false)
+                .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     MENU_TOGGLE_GATEWAY => {
-                        let state = app.state::<GatewayProcessState>();
-                        let handle = app.app_handle().clone();
+                        let app_handle = app.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
+                            let state = app_handle.state::<GatewayProcessState>();
                             let is_running = {
                                 let guard = state.inner.lock().unwrap();
                                 guard.as_ref().map_or(false, |m| !m.task.is_finished())
                             };
                             if is_running {
-                                let _ = stop_gateway(handle.clone(), state).await;
+                                let _ = stop_gateway(app_handle.clone(), state).await;
                             } else {
-                                let _ = start_gateway(handle.clone(), state).await;
+                                let _ = start_gateway(app_handle.clone(), state).await;
                             }
-                            update_tray_menu(&handle);
+                            update_tray_menu(&app_handle);
                         });
                     }
                     "quit" => app.exit(0),
