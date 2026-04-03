@@ -265,6 +265,27 @@ async fn start_embedded_gateway(config_path: PathBuf) -> Result<ManagedGateway, 
     })
 }
 
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+
+const MENU_TOGGLE_GATEWAY: &str = "toggle_gateway";
+
+fn update_tray_menu(app: &tauri::AppHandle) {
+    let state = app.state::<GatewayProcessState>();
+    let is_running = {
+        let guard = state.inner.lock().unwrap();
+        guard.as_ref().map_or(false, |m| !m.task.is_finished())
+    };
+
+    if let Some(tray) = app.tray_by_id("main_tray") {
+        if let Some(menu) = tray.menu() {
+            if let Some(item) = menu.get(MENU_TOGGLE_GATEWAY).and_then(|i| i.as_menuitem()) {
+                let _ = item.set_text(if is_running { "停止网关" } else { "启动网关" });
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn gateway_status(state: State<GatewayProcessState>) -> GatewayProcessStatus {
     let mut guard = state.inner.lock().expect("gateway state poisoned");
@@ -302,6 +323,10 @@ async fn start_gateway(
 
     let mut guard = state.inner.lock().map_err(|_| "gateway state poisoned")?;
     *guard = Some(managed);
+    
+    // 更新托盘菜单状态
+    update_tray_menu(state.app_handle());
+    
     Ok(running_status(&config_path))
 }
 
@@ -328,6 +353,9 @@ async fn stop_gateway(
             let _ = managed.task.await;
         }
     }
+
+    // 更新托盘菜单状态
+    update_tray_menu(state.app_handle());
 
     Ok(stopped_status(None))
 }
@@ -929,6 +957,63 @@ pub fn run() {
     tauri::Builder::default()
         .manage(GatewayProcessState::default())
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            let toggle_i = MenuItem::with_id(app, MENU_TOGGLE_GATEWAY, "启动网关", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&toggle_i, &show_i, &quit_i])?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .menu_on_left_click(false)
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    MENU_TOGGLE_GATEWAY => {
+                        let state = app.state::<GatewayProcessState>();
+                        let handle = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            let is_running = {
+                                let guard = state.inner.lock().unwrap();
+                                guard.as_ref().map_or(false, |m| !m.task.is_finished())
+                            };
+                            if is_running {
+                                let _ = stop_gateway(state).await;
+                            } else {
+                                let _ = start_gateway(state).await;
+                            }
+                            update_tray_menu(&handle);
+                        });
+                    }
+                    "quit" => app.exit(0),
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .id("main_tray")
+                .build(app)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             gateway_status,
             start_gateway,
