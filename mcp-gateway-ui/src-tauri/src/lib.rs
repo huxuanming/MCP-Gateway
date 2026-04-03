@@ -265,23 +265,23 @@ async fn start_embedded_gateway(config_path: PathBuf) -> Result<ManagedGateway, 
     })
 }
 
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, State, Wry};
+use tauri::menu::{Menu, MenuItem, IsMenuItem};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent, TrayIconId};
 
 const MENU_TOGGLE_GATEWAY: &str = "toggle_gateway";
 
-fn update_tray_menu(app: &tauri::AppHandle) {
+fn update_tray_menu(app: &AppHandle) {
     let state = app.state::<GatewayProcessState>();
     let is_running = {
         let guard = state.inner.lock().unwrap();
         guard.as_ref().map_or(false, |m| !m.task.is_finished())
     };
 
-    if let Some(tray) = app.tray_by_id("main_tray") {
-        if let Some(menu) = tray.menu() {
-            if let Some(item) = menu.get(MENU_TOGGLE_GATEWAY).and_then(|i| i.as_menuitem()) {
-                let _ = item.set_text(if is_running { "停止网关" } else { "启动网关" });
-            }
+    // 在 Tauri 2.0 中直接通过 app 获取菜单项
+    if let Some(item) = app.menu().and_then(|m| m.get(MENU_TOGGLE_GATEWAY)) {
+        if let Some(menu_item) = item.as_menuitem() {
+            let _ = menu_item.set_text(if is_running { "停止网关" } else { "启动网关" });
         }
     }
 }
@@ -970,7 +970,7 @@ pub fn run() {
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     MENU_TOGGLE_GATEWAY => {
                         let state = app.state::<GatewayProcessState>();
-                        let handle = app.handle().clone();
+                        let handle = app.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             let is_running = {
                                 let guard = state.inner.lock().unwrap();
@@ -1004,7 +1004,6 @@ pub fn run() {
                         }
                     }
                 })
-                .id("main_tray")
                 .build(app)?;
             Ok(())
         })
