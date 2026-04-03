@@ -265,9 +265,9 @@ async fn start_embedded_gateway(config_path: PathBuf) -> Result<ManagedGateway, 
     })
 }
 
-use tauri::{AppHandle, Manager, State, Wry};
-use tauri::menu::{Menu, MenuItem, IsMenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent, TrayIconId};
+use tauri::{AppHandle, Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 
 const MENU_TOGGLE_GATEWAY: &str = "toggle_gateway";
 
@@ -303,6 +303,7 @@ fn gateway_status(state: State<GatewayProcessState>) -> GatewayProcessStatus {
 
 #[tauri::command]
 async fn start_gateway(
+    app: AppHandle,
     state: State<'_, GatewayProcessState>,
 ) -> Result<GatewayProcessStatus, String> {
     let _lifecycle_guard = state.lifecycle_lock.lock().await;
@@ -323,15 +324,16 @@ async fn start_gateway(
 
     let mut guard = state.inner.lock().map_err(|_| "gateway state poisoned")?;
     *guard = Some(managed);
-    
+
     // 更新托盘菜单状态
-    update_tray_menu(state.app_handle());
-    
+    update_tray_menu(&app);
+
     Ok(running_status(&config_path))
 }
 
 #[tauri::command]
 async fn stop_gateway(
+    app: AppHandle,
     state: State<'_, GatewayProcessState>,
 ) -> Result<GatewayProcessStatus, String> {
     let _lifecycle_guard = state.lifecycle_lock.lock().await;
@@ -355,7 +357,7 @@ async fn stop_gateway(
     }
 
     // 更新托盘菜单状态
-    update_tray_menu(state.app_handle());
+    update_tray_menu(&app);
 
     Ok(stopped_status(None))
 }
@@ -977,9 +979,9 @@ pub fn run() {
                                 guard.as_ref().map_or(false, |m| !m.task.is_finished())
                             };
                             if is_running {
-                                let _ = stop_gateway(state).await;
+                                let _ = stop_gateway(handle.clone(), state).await;
                             } else {
-                                let _ = start_gateway(state).await;
+                                let _ = start_gateway(handle.clone(), state).await;
                             }
                             update_tray_menu(&handle);
                         });
